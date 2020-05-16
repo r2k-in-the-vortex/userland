@@ -145,6 +145,7 @@ typedef struct
    int datetime;                       /// Use DateTime instead of frame#
    int timestamp;                      /// Use timestamp instead of frame#
    int restart_interval;               /// JPEG restart interval. 0 for none.
+   int long_shutter_speed;             /// Change to long shutter speed after warmup
 
    RASPIPREVIEW_PARAMETERS preview_parameters;    /// Preview setup parameters
    RASPICAM_CAMERA_PARAMETERS camera_parameters; /// Camera setup parameters
@@ -194,6 +195,7 @@ enum
    CommandTimeStamp,
    CommandFrameStart,
    CommandRestartInterval,
+   CommandLongShutterSpeed,
 };
 
 static COMMAND_LIST cmdline_commands[] =
@@ -217,6 +219,7 @@ static COMMAND_LIST cmdline_commands[] =
    { CommandTimeStamp, "-timestamp", "ts", "Replace output pattern (%d) with unix timestamp (seconds since 1970)", 0},
    { CommandFrameStart,"-framestart","fs",  "Starting frame number in output pattern(%d)", 1},
    { CommandRestartInterval, "-restart","rs","JPEG Restart interval (default of 0 for none)", 1},
+   { CommandLongShutterSpeed, "-longShutter","lss","Change to long shutter speed after warmup", 0},
 };
 
 static int cmdline_commands_size = sizeof(cmdline_commands) / sizeof(cmdline_commands[0]);
@@ -300,6 +303,7 @@ static void default_status(RASPISTILL_STATE *state)
    state->datetime = 0;
    state->timestamp = 0;
    state->restart_interval = 0;
+   state->long_shutter_speed = 0;
 
    // Setup preview window defaults
    raspipreview_set_defaults(&state->preview_parameters);
@@ -636,6 +640,15 @@ static int parse_cmdline(int argc, const char **argv, RASPISTILL_STATE *state)
          break;
       }
 
+      case CommandLongShutterSpeed:
+        if(sscanf(argv[i + 1], "%d", &state->long_shutter_speed) == 1)
+        {
+            i++;
+        }
+        else
+            valid = 0;
+        break;
+
       default:
       {
          // Try parsing for any image specific parameters
@@ -869,14 +882,14 @@ static MMAL_STATUS_T create_camera_component(RASPISTILL_STATE *state)
    format->encoding = MMAL_ENCODING_OPAQUE;
    format->encoding_variant = MMAL_ENCODING_I420;
 
-   if(state->camera_parameters.shutter_speed > 6000000)
+   if(state->camera_parameters.shutter_speed > 6000000 || state->long_shutter_speed > 1000000)
    {
       MMAL_PARAMETER_FPS_RANGE_T fps_range = {{MMAL_PARAMETER_FPS_RANGE, sizeof(fps_range)},
          { 5, 1000 }, {166, 1000}
       };
       mmal_port_parameter_set(preview_port, &fps_range.hdr);
    }
-   else if(state->camera_parameters.shutter_speed > 1000000)
+   else if(state->camera_parameters.shutter_speed > 1000000 || state->long_shutter_speed > 1000000)
    {
       MMAL_PARAMETER_FPS_RANGE_T fps_range = {{MMAL_PARAMETER_FPS_RANGE, sizeof(fps_range)},
          { 166, 1000 }, {999, 1000}
@@ -1896,10 +1909,21 @@ int main(int argc, const char **argv)
                         vcos_log_error("RAW was requested, but failed to enable");
                      }
                   }
+                  
+                  if (state.common_settings.verbose)
+                     fprintf(stderr, "ISO %d\n", state.camera_parameters.ISO);
 
                   // There is a possibility that shutter needs to be set each loop.
-                  if (mmal_status_to_int(mmal_port_parameter_set_uint32(state.camera_component->control, MMAL_PARAMETER_SHUTTER_SPEED, state.camera_parameters.shutter_speed)) != MMAL_SUCCESS)
-                     vcos_log_error("Unable to set shutter speed");
+                  if (state.long_shutter_speed == 0 || frame == 0)
+                  {
+                      if (mmal_status_to_int(mmal_port_parameter_set_uint32(state.camera_component->control, MMAL_PARAMETER_SHUTTER_SPEED, state.camera_parameters.shutter_speed)) != MMAL_SUCCESS)
+                         vcos_log_error("Unable to set shutter speed");
+                  }
+                  else
+                  {
+                      if (mmal_status_to_int(mmal_port_parameter_set_uint32(state.camera_component->control, MMAL_PARAMETER_SHUTTER_SPEED, state.long_shutter_speed)) != MMAL_SUCCESS)
+                         vcos_log_error("Unable to set shutter speed to still long capture");
+                  }
 
                   // Enable the encoder output port
                   encoder_output_port->userdata = (struct MMAL_PORT_USERDATA_T *)&callback_data;
