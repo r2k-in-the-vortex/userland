@@ -882,7 +882,7 @@ static MMAL_STATUS_T create_camera_component(RASPISTILL_STATE *state)
    format->encoding = MMAL_ENCODING_OPAQUE;
    format->encoding_variant = MMAL_ENCODING_I420;
 
-   if(state->camera_parameters.shutter_speed > 6000000 || state->long_shutter_speed > 1000000)
+   if(state->camera_parameters.shutter_speed > 6000000 || state->long_shutter_speed > 6000000)
    {
       MMAL_PARAMETER_FPS_RANGE_T fps_range = {{MMAL_PARAMETER_FPS_RANGE, sizeof(fps_range)},
          { 5, 1000 }, {166, 1000}
@@ -1651,7 +1651,7 @@ int main(int argc, const char **argv)
    // Our main data storage vessel..
    RASPISTILL_STATE state;
    int exit_code = EX_OK;
-
+   int firstFrame = 1;
    MMAL_STATUS_T status = MMAL_SUCCESS;
    MMAL_PORT_T *camera_preview_port = NULL;
    MMAL_PORT_T *camera_video_port = NULL;
@@ -1909,21 +1909,20 @@ int main(int argc, const char **argv)
                         vcos_log_error("RAW was requested, but failed to enable");
                      }
                   }
-                  
-                  if (state.common_settings.verbose)
-                     fprintf(stderr, "ISO %d\n", state.camera_parameters.ISO);
 
                   // There is a possibility that shutter needs to be set each loop.
-                  if (state.long_shutter_speed == 0 || frame == 0)
+                  if (state.long_shutter_speed == 0 || firstFrame == 1)
                   {
                       if (mmal_status_to_int(mmal_port_parameter_set_uint32(state.camera_component->control, MMAL_PARAMETER_SHUTTER_SPEED, state.camera_parameters.shutter_speed)) != MMAL_SUCCESS)
                          vcos_log_error("Unable to set shutter speed");
                   }
                   else
                   {
+                      if (state.common_settings.verbose) fprintf(stderr, "Swapping to long shutter speed -lss = %d\n", state.long_shutter_speed);
                       if (mmal_status_to_int(mmal_port_parameter_set_uint32(state.camera_component->control, MMAL_PARAMETER_SHUTTER_SPEED, state.long_shutter_speed)) != MMAL_SUCCESS)
                          vcos_log_error("Unable to set shutter speed to still long capture");
                   }
+                  firstFrame = 0;
 
                   // Enable the encoder output port
                   encoder_output_port->userdata = (struct MMAL_PORT_USERDATA_T *)&callback_data;
@@ -2043,32 +2042,48 @@ error:
 
       if (state.useGL)
       {
+          if (state.common_settings.verbose) fprintf(stderr, "Stopping GL\n");
          raspitex_stop(&state.raspitex_state);
          raspitex_destroy(&state.raspitex_state);
       }
 
       // Disable all our ports that are not handled by connections
+      if (state.common_settings.verbose) fprintf(stderr, "Check Disable port Video\n");
       check_disable_port(camera_video_port);
+      if (state.common_settings.verbose) fprintf(stderr, "Check Disable encoder output\n");
       check_disable_port(encoder_output_port);
 
-      if (state.preview_connection)
+      if (state.preview_connection){
+         if (state.common_settings.verbose) fprintf(stderr, "Destroy preview connection\n");
          mmal_connection_destroy(state.preview_connection);
+      }
 
-      if (state.encoder_connection)
+      if (state.encoder_connection){
+         if (state.common_settings.verbose) fprintf(stderr, "Destroy encoder connection\n");
          mmal_connection_destroy(state.encoder_connection);
+      }
 
       /* Disable components */
-      if (state.encoder_component)
+      if (state.encoder_component){
+         if (state.common_settings.verbose) fprintf(stderr, "Disable encoder component\n");
          mmal_component_disable(state.encoder_component);
+      }
 
-      if (state.preview_parameters.preview_component)
+      if (state.preview_parameters.preview_component){
+         if (state.common_settings.verbose) fprintf(stderr, "Disable preview component\n");
          mmal_component_disable(state.preview_parameters.preview_component);
+      }
 
-      if (state.camera_component)
+      if (state.camera_component){
+         if (state.common_settings.verbose) fprintf(stderr, "Disable camera component\n");
          mmal_component_disable(state.camera_component);
+      }
 
+      if (state.common_settings.verbose) fprintf(stderr, "Destory encoder\n");
       destroy_encoder_component(&state);
+      if (state.common_settings.verbose) fprintf(stderr, "Destory preview\n");
       raspipreview_destroy(&state.preview_parameters);
+      if (state.common_settings.verbose) fprintf(stderr, "Destory camera\n");
       destroy_camera_component(&state);
 
       if (state.common_settings.verbose)
